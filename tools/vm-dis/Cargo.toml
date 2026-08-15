@@ -1,0 +1,21 @@
+[package]
+name = "moonblokz-vm-dis"
+version = "0.1.0"
+edition = "2024"
+description = "Disassembler for MoonBlokz configuration bytecode — bytes to the canonical textual form."
+license = "MIT"
+repository = "https://github.com/petersallai/moonblokz-vm"
+
+[lib]
+name = "moonblokz_vm_dis"
+path = "src/lib.rs"
+
+[[bin]]
+name = "vm-dis"
+path = "src/main.rs"
+
+[dependencies]
+moonblokz-vm = { path = "../.." }
+
+[dev-dependencies]
+moonblokz-vm-asm = { path = "../vm-asm" }

@@ -1,0 +1,21 @@
+[package]
+name = "moonblokz-vm"
+version = "0.1.0"
+edition = "2024"
+description = "MoonBlokz no_std bytecode execution engine — stack machine, fuel accounting and host seam for computed chain-configuration parameters (FR56)."
+license = "MIT"
+repository = "https://github.com/petersallai/moonblokz-vm"
+keywords = ["embedded", "no-std", "blockchain", "moonblokz", "bytecode"]
+categories = ["embedded", "no-std"]
+
+[features]
+default = []
+
+[dependencies]
+
+# The host-side tools are separate packages rather than features of this one.
+# Cargo unifies features per package, so a `std` tool target sharing this
+# package could pull `std` into the library's own build and quietly break the
+# dependency gate.
+[workspace]
+members = ["tools/vm-asm", "tools/vm-dis"]

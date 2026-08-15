@@ -1,0 +1,18 @@
+[package]
+name = "moonblokz-vm-asm"
+version = "0.1.0"
+edition = "2024"
+description = "Assembler for MoonBlokz configuration bytecode — the textual form of the instruction set to bytes."
+license = "MIT"
+repository = "https://github.com/petersallai/moonblokz-vm"
+
+[lib]
+name = "moonblokz_vm_asm"
+path = "src/lib.rs"
+
+[[bin]]
+name = "vm-asm"
+path = "src/main.rs"
+
+[dependencies]
+moonblokz-vm = { path = "../.." }
