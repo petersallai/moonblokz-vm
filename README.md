@@ -28,7 +28,7 @@ Two `std` binaries, each a **separate package** under `tools/` rather than a fea
 
 ```
 cargo run -p moonblokz-vm-asm -- program.asm -o program.bin
-cargo run -p moonblokz-vm-dis -- --hex "70 01 10 02 43 01"
+cargo run -p moonblokz-vm-dis -- --hex "70 01 00 10 02 43 01"
 ```
 
 `vm-asm` is the only place structural mistakes are diagnosed, and it is a library as well as a binary because `config-encoder` assembles configuration bytecode itself. `vm-dis` emits the canonical text, and the round trip through both — `assemble(disassemble(bytes)) == bytes` — is the conformance test for the instruction set.

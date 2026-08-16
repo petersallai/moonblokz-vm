@@ -180,7 +180,9 @@ pub fn assemble(source: &str) -> Result<Vec<u8>, AsmError> {
         let mut second = 0u64;
         let mut target = None;
 
-        if imm != Imm::U8Pair && let Some(extra) = operand2 {
+        // Instructions with no immediate fall through to their own arm below,
+        // which names the first spurious operand rather than the second.
+        if !matches!(imm, Imm::None | Imm::U8Pair) && let Some(extra) = operand2 {
             return Err(err(line, format!("{mnemonic} takes one operand, found `{extra}`")));
         }
 
@@ -310,6 +312,11 @@ mod tests {
         // An instruction with a single immediate still refuses a second operand.
         let spurious = assemble("PUSH_U8 1, 2\n").unwrap_err();
         assert!(spurious.message.contains("one operand"), "{}", spurious.message);
+
+        // One with no immediate says so, and names the first spurious operand.
+        let none = assemble("ADD 1 2\n").unwrap_err();
+        assert!(none.message.contains("no operand"), "{}", none.message);
+        assert!(none.message.contains('1'), "{}", none.message);
     }
 
     #[test]

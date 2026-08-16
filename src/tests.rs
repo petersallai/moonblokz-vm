@@ -47,28 +47,27 @@ impl TableHost {
 }
 
 impl VmHost for TableHost {
-    fn call(&self, func_id: u16, args: &[u64], fuel: &mut Fuel) -> Option<u64> {
+    fn call(&self, func_id: u16, selector: u8, args: &[u64], fuel: &mut Fuel) -> Option<u64> {
         if func_id != HOST_RESOLVE_PARAMETER {
             return None;
         }
         self.calls.set(self.calls.get() + 1);
-        let param = self.lookup(args[0] as u8)?;
+        let param = self.lookup(selector)?;
 
         // The instruction declares how many operands it passed; only the host
         // knows what the registry says the arity is, so checking that the two
         // agree is the host's job and nobody else's.
-        let declared = args.len() - 1;
         let registered = match param {
             Param::Constant(_) => 0,
             Param::Program(_, arity) => *arity as usize,
         };
-        if declared != registered {
+        if args.len() != registered {
             return None;
         }
 
         match param {
             Param::Constant(value) => Some(*value),
-            Param::Program(program, _) => match TestVm::execute(program, &args[1..], fuel, self) {
+            Param::Program(program, _) => match TestVm::execute(program, args, fuel, self) {
                 VmOutcome::Completed(value) => Some(value),
                 _ => None,
             },
@@ -80,7 +79,7 @@ impl VmHost for TableHost {
 struct DecliningHost;
 
 impl VmHost for DecliningHost {
-    fn call(&self, _func_id: u16, _args: &[u64], _fuel: &mut Fuel) -> Option<u64> {
+    fn call(&self, _func_id: u16, _selector: u8, _args: &[u64], _fuel: &mut Fuel) -> Option<u64> {
         None
     }
 }
@@ -603,8 +602,8 @@ fn getparam_underflows_when_the_stack_lacks_the_arity() {
 #[test]
 fn getparam_overflows_when_the_stack_is_full() {
     use opcode::*;
-    // The key is written beneath the arguments, so a full stack has no room for
-    // it even when the call would consume operands.
+    // An argument-less resolution pushes without consuming, so a full stack has
+    // nowhere to put the result.
     static PARAMS: &[(u8, Param)] = &[(1, Param::Constant(5))];
     let host = TableHost::new(PARAMS);
 
@@ -620,6 +619,30 @@ fn getparam_overflows_when_the_stack_is_full() {
 
     let mut fuel = Fuel::new(1000);
     assert_eq!(TestVm::execute(&program, &[], &mut fuel, &host), VmOutcome::Trapped(TrapReason::StackOverflow));
+}
+
+#[test]
+fn getparam_with_arguments_fits_on_a_full_stack() {
+    use opcode::*;
+    // Consuming one operand and pushing one result is a net stack effect of
+    // zero, so a full stack is no obstacle. It was, while the key travelled
+    // inside the argument slice and had to borrow a slot to do so.
+    static IDENTITY: &[u8] = &[ARG, 0, RET];
+    static PARAMS: &[(u8, Param)] = &[(24, Param::Program(IDENTITY, 1))];
+    let host = TableHost::new(PARAMS);
+
+    let mut program = [0u8; STACK_DEPTH * 2 + 4];
+    for slot in 0..STACK_DEPTH {
+        program[slot * 2] = PUSH_U8;
+        program[slot * 2 + 1] = 7;
+    }
+    program[STACK_DEPTH * 2] = GETPARAM;
+    program[STACK_DEPTH * 2 + 1] = 24;
+    program[STACK_DEPTH * 2 + 2] = 1;
+    program[STACK_DEPTH * 2 + 3] = RET;
+
+    let mut fuel = Fuel::new(1000);
+    assert_eq!(TestVm::execute(&program, &[], &mut fuel, &host), VmOutcome::Completed(7));
 }
 
 #[test]

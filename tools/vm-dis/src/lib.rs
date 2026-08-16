@@ -120,11 +120,13 @@ fn decode(bytes: &[u8]) -> Result<Vec<Decoded>, DisError> {
 /// and placed on their own lines, a comma and a space between the two operands
 /// of a paired immediate, and LF line endings.
 ///
-/// A jump whose destination does not coincide with a linearly decoded
-/// instruction — one landing mid-instruction, or outside the program — is
-/// rendered as an explicit signed displacement instead of a label. There is no
-/// line to attach a label to in those cases, and emitting the displacement is
-/// what keeps `assemble(disassemble(bytes)) == bytes` exact.
+/// A jump whose destination does not begin a linearly decoded instruction is
+/// rendered as an explicit signed displacement instead of a label: there is no
+/// line to attach a label to. For a destination landing mid-instruction that is
+/// what keeps `assemble(disassemble(bytes)) == bytes` exact. A destination
+/// *outside* the program is rendered the same way but does not round-trip —
+/// `vm-asm` refuses it, because specification §11 asks the assembler for exactly
+/// that diagnostic, and §7.2.4 scopes the round trip to programs it accepts.
 pub fn disassemble(bytes: &[u8]) -> Result<String, DisError> {
     let decoded = decode(bytes)?;
 
@@ -188,6 +190,11 @@ pub fn hexdump(bytes: &[u8]) -> String {
 /// Parses a hexadecimal string, ignoring whitespace.
 pub fn parse_hex(text: &str) -> Result<Vec<u8>, String> {
     let digits: String = text.split_whitespace().collect();
+    // Reject anything that is not a hex digit before indexing: the slicing below
+    // is by byte, and a multi-byte character would land inside one.
+    if let Some(bad) = digits.chars().find(|c| !c.is_ascii_hexdigit()) {
+        return Err(format!("`{bad}` is not a hexadecimal digit"));
+    }
     if !digits.len().is_multiple_of(2) {
         return Err("a hexadecimal program needs an even number of digits".to_string());
     }
@@ -331,8 +338,11 @@ second: RET
         assert_eq!(hexdump(&bytes), "70 01 10 02 43 01");
         assert_eq!(parse_hex("70 01 10 02 43 01").unwrap(), bytes);
         assert_eq!(parse_hex("700110024301").unwrap(), bytes);
-        assert!(parse_hex("70 0").is_err());
-        assert!(parse_hex("ZZ").is_err());
+        assert!(parse_hex("70 0").is_err(), "odd digit count");
+        assert!(parse_hex("ZZ").is_err(), "not hexadecimal");
+        // A multi-byte character must be reported, not indexed into.
+        let non_ascii = parse_hex("a\u{f1}b").unwrap_err();
+        assert!(non_ascii.contains('\u{f1}'), "{non_ascii}");
     }
 
     #[test]

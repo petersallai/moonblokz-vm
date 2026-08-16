@@ -51,7 +51,7 @@
 //! use moonblokz_vm::{Fuel, Vm, VmOutcome};
 //! # struct NoHost;
 //! # impl moonblokz_vm::VmHost for NoHost {
-//! #     fn call(&self, _: u16, _: &[u64], _: &mut Fuel) -> Option<u64> { None }
+//! #     fn call(&self, _: u16, _: u8, _: &[u64], _: &mut Fuel) -> Option<u64> { None }
 //! # }
 //! // registration_price(n) = min(1000 + 5 * n, 50000)
 //! let program = [
@@ -367,8 +367,8 @@ impl Fuel {
 // Host seam
 // ---------------------------------------------------------------------------
 
-/// The `func_id` of parameter resolution: `args[0]` is the parameter identifier
-/// and `args[1..]` are its arguments.
+/// The `func_id` of parameter resolution: the selector is the parameter
+/// identifier and `args` are its arguments.
 pub const HOST_RESOLVE_PARAMETER: u16 = 0;
 
 /// The whole of this crate's coupling to MoonBlokz: an identifier it does not
@@ -378,22 +378,33 @@ pub const HOST_RESOLVE_PARAMETER: u16 = 0;
 /// capabilities are new `func_id` values rather than new trait methods — an added
 /// method is a breaking change for every implementor, an added identifier is not.
 ///
+/// # Why the selector is separate from the arguments
+///
+/// Keeping the parameter identifier out of `args` lets the machine hand over a
+/// slice of the operand stack exactly as it stands. Folding it in would mean
+/// building `[key, a0, …]` somewhere, and the only place to build it without a
+/// second array is the stack itself — which would borrow a free slot and make
+/// [`GETPARAM`] overflow a full stack even where its net stack effect is zero.
+/// The separation is what keeps the instruction's stack effect precisely what
+/// the specification states.
+///
 /// # The host validates the argument count
 ///
-/// [`GETPARAM`] declares how many operands it passes, so `args.len() - 1` is what
-/// the *program* claims the parameter's arity to be, not what the registry says
-/// it is. The host owns the registry and is therefore the only party that can
-/// tell the two apart: a program declaring the wrong count should be declined,
-/// which reaches the program as [`HostCallUnresolved`] and falls to the next
-/// resolution tier like any other failure. The VM neither knows nor checks.
+/// [`GETPARAM`] declares how many operands it passes, so `args.len()` is what the
+/// *program* claims the parameter's arity to be, not what the registry says it
+/// is. The host owns the registry and is therefore the only party that can tell
+/// the two apart: a program declaring the wrong count should be declined, which
+/// reaches the program as [`HostCallUnresolved`] and falls to the next resolution
+/// tier like any other failure. The VM neither knows nor checks.
 ///
 /// [`GETPARAM`]: opcode::GETPARAM
 /// [`HostCallUnresolved`]: TrapReason::HostCallUnresolved
 pub trait VmHost {
-    /// Invokes `func_id` over `args`, drawing from the caller's remaining budget.
+    /// Invokes `func_id` on `selector` over `args`, drawing from the caller's
+    /// remaining budget.
     ///
     /// `None` propagates as a failed evaluation of the calling program.
-    fn call(&self, func_id: u16, args: &[u64], fuel: &mut Fuel) -> Option<u64>;
+    fn call(&self, func_id: u16, selector: u8, args: &[u64], fuel: &mut Fuel) -> Option<u64>;
 }
 
 // ---------------------------------------------------------------------------
@@ -739,22 +750,18 @@ impl<const STACK_DEPTH: usize, const LOCAL_SLOTS: usize, const MAX_NESTING: usiz
                         return VmOutcome::Trapped(TrapReason::NestingDepthExceeded);
                     }
 
-                    // The host wants `[key, arg0, .., argN-1]` contiguously, and
-                    // the arguments are already contiguous on the operand stack
-                    // with argument 0 deepest. Shifting them up by one slot makes
-                    // room for the key beneath them, which turns the stack itself
-                    // into the argument buffer — no second array, and the depth
-                    // check that guards the shift is the stack bound the machine
-                    // already owes.
-                    if sp == STACK_DEPTH {
-                        return VmOutcome::Trapped(TrapReason::StackOverflow);
-                    }
+                    // The arguments are already contiguous on the operand stack
+                    // with argument 0 deepest, and the key travels beside them
+                    // rather than within them, so the slice goes to the host as
+                    // it stands — no copy, and no slot borrowed to hold the key.
+                    // That is what leaves the instruction's stack effect exactly
+                    // as specified: consuming `argc` and pushing one cannot
+                    // overflow unless `argc` is zero, which the push below
+                    // catches on its own.
                     let base = sp - argc;
-                    stack.copy_within(base..sp, base + 1);
-                    stack[base] = key as u64;
 
                     fuel.depth += 1;
-                    let resolved = host.call(HOST_RESOLVE_PARAMETER, &stack[base..sp + 1], fuel);
+                    let resolved = host.call(HOST_RESOLVE_PARAMETER, key, &stack[base..sp], fuel);
                     fuel.depth -= 1;
 
                     sp = base;
