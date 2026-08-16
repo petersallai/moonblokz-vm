@@ -6,9 +6,13 @@
 
 use super::*;
 
-/// The machine shape used throughout the suite. The values are test fixtures,
-/// not defaults — the real ones are picked by `moonblokz-configuration` once the
-/// measurements of specification §12 exist.
+/// The machine shape used throughout the suite.
+///
+/// These are test fixtures, not defaults: this crate has none, and the
+/// deployment values are `moonblokz-configuration`'s to pick — specification
+/// §12 now ratifies them as 16 / 8 / 3. The nesting depth here is deliberately
+/// not the ratified one, so the suite keeps exercising that bound as a
+/// parameter rather than as a constant that happens to be baked in.
 type TestVm = Vm<16, 8, 4>;
 
 const STACK_DEPTH: usize = 16;
