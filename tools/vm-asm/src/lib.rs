@@ -57,8 +57,11 @@ struct Parsed {
     offset: usize,
     opcode: u8,
     imm: Imm,
-    /// The immediate for everything except jumps.
+    /// The immediate for everything except jumps; the first of the two for a
+    /// paired immediate.
     value: u64,
+    /// The second immediate of a paired immediate.
+    second: u64,
     /// The destination for jumps.
     target: Option<Target>,
 }
@@ -153,9 +156,13 @@ pub fn assemble(source: &str) -> Result<Vec<u8>, AsmError> {
             continue;
         }
 
-        let mut tokens = text.split_whitespace();
+        // Operands are separated by a comma, whitespace, or both; normalising the
+        // comma away keeps the lexer a single whitespace split.
+        let normalised = text.replace(',', " ");
+        let mut tokens = normalised.split_whitespace();
         let mnemonic = tokens.next().expect("non-empty text has a first token");
         let operand = tokens.next();
+        let operand2 = tokens.next();
         if let Some(extra) = tokens.next() {
             return Err(err(line, format!("unexpected operand `{extra}`")));
         }
@@ -170,12 +177,29 @@ pub fn assemble(source: &str) -> Result<Vec<u8>, AsmError> {
         };
 
         let mut value = 0u64;
+        let mut second = 0u64;
         let mut target = None;
+
+        if imm != Imm::U8Pair && let Some(extra) = operand2 {
+            return Err(err(line, format!("{mnemonic} takes one operand, found `{extra}`")));
+        }
 
         match imm {
             Imm::None => {
                 if let Some(extra) = operand {
                     return Err(err(line, format!("{mnemonic} takes no operand, found `{extra}`")));
+                }
+            }
+            Imm::U8Pair => {
+                let key = operand.ok_or_else(|| err(line, format!("{mnemonic} needs a key and an argument count")))?;
+                let count = operand2.ok_or_else(|| err(line, format!("{mnemonic} needs an argument count after the key")))?;
+                value = parse_unsigned(key).ok_or_else(|| err(line, format!("`{key}` is not an unsigned integer")))?;
+                second = parse_unsigned(count).ok_or_else(|| err(line, format!("`{count}` is not an unsigned integer")))?;
+                if value > u8::MAX as u64 {
+                    return Err(err(line, format!("key {value} does not fit in 8 bits")));
+                }
+                if second > u8::MAX as u64 {
+                    return Err(err(line, format!("argument count {second} does not fit in 8 bits")));
                 }
             }
             Imm::Rel16 => {
@@ -200,7 +224,7 @@ pub fn assemble(source: &str) -> Result<Vec<u8>, AsmError> {
             }
         }
 
-        parsed.push(Parsed { line, offset, opcode: op, imm, value, target });
+        parsed.push(Parsed { line, offset, opcode: op, imm, value, second, target });
         offset += parsed.last().expect("just pushed").size();
 
         if offset > MAX_PROGRAM_LEN {
@@ -219,6 +243,10 @@ pub fn assemble(source: &str) -> Result<Vec<u8>, AsmError> {
         match insn.imm {
             Imm::None => {}
             Imm::U8 => bytes.push(insn.value as u8),
+            Imm::U8Pair => {
+                bytes.push(insn.value as u8);
+                bytes.push(insn.second as u8);
+            }
             Imm::U16 => bytes.extend_from_slice(&(insn.value as u16).to_le_bytes()),
             Imm::U32 => bytes.extend_from_slice(&(insn.value as u32).to_le_bytes()),
             Imm::U64 => bytes.extend_from_slice(&insn.value.to_le_bytes()),
@@ -262,8 +290,26 @@ mod tests {
 
     #[test]
     fn specification_example_derived_parameter() {
-        let source = "GETPARAM 1        ; inter_block_interval_ms\nPUSH 2\nDIV\nRET\n";
-        assert_eq!(assemble(source).unwrap(), vec![0x70, 0x01, 0x10, 0x02, 0x43, 0x01]);
+        let source = "GETPARAM 1, 0        ; inter_block_interval_ms\nPUSH 2\nDIV\nRET\n";
+        assert_eq!(assemble(source).unwrap(), vec![0x70, 0x01, 0x00, 0x10, 0x02, 0x43, 0x01]);
+    }
+
+    #[test]
+    fn getparam_declares_its_argument_count() {
+        // The comma is optional, and the count is a second immediate byte.
+        assert_eq!(assemble("GETPARAM 24, 1\nRET\n").unwrap(), vec![0x70, 0x18, 0x01, 0x01]);
+        assert_eq!(assemble("GETPARAM 24 1\nRET\n").unwrap(), vec![0x70, 0x18, 0x01, 0x01]);
+        assert_eq!(assemble("getparam 0x18,0x01\nret\n").unwrap(), vec![0x70, 0x18, 0x01, 0x01]);
+
+        let missing = assemble("GETPARAM 24\n").unwrap_err();
+        assert!(missing.message.contains("argument count"), "{}", missing.message);
+
+        let too_wide = assemble("GETPARAM 24, 256\n").unwrap_err();
+        assert!(too_wide.message.contains("argument count"), "{}", too_wide.message);
+
+        // An instruction with a single immediate still refuses a second operand.
+        let spurious = assemble("PUSH_U8 1, 2\n").unwrap_err();
+        assert!(spurious.message.contains("one operand"), "{}", spurious.message);
     }
 
     #[test]
@@ -405,6 +451,7 @@ done:   POP
                 Imm::None => format!("{}\n", info.mnemonic),
                 // A jump needs somewhere to land, so give it a following RET.
                 Imm::Rel16 => format!("{} 0\nRET\n", info.mnemonic),
+                Imm::U8Pair => format!("{} 1, 0\n", info.mnemonic),
                 _ => format!("{} 1\n", info.mnemonic),
             };
             let bytes = assemble(&source).unwrap_or_else(|e| panic!("{} failed: {e}", info.mnemonic));

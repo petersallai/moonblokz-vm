@@ -35,8 +35,11 @@ struct Decoded {
     offset: usize,
     opcode: u8,
     imm: Imm,
-    /// The immediate, for everything except jumps.
+    /// The immediate, for everything except jumps; the first of the two for a
+    /// paired immediate.
     value: u64,
+    /// The second immediate of a paired immediate.
+    second: u64,
     /// The destination, for jumps. `None` when it falls outside the program.
     destination: Option<usize>,
     /// The raw displacement, for jumps.
@@ -67,12 +70,17 @@ fn decode(bytes: &[u8]) -> Result<Vec<Decoded>, DisError> {
         })?;
 
         let mut value = 0u64;
+        let mut second = 0u64;
         let mut displacement = 0i16;
         let mut destination = None;
 
         match info.imm {
             Imm::None => {}
             Imm::U8 => value = immediate[0] as u64,
+            Imm::U8Pair => {
+                value = immediate[0] as u64;
+                second = immediate[1] as u64;
+            }
             Imm::U16 => value = u16::from_le_bytes([immediate[0], immediate[1]]) as u64,
             Imm::U32 => value = u32::from_le_bytes([immediate[0], immediate[1], immediate[2], immediate[3]]) as u64,
             Imm::U64 => {
@@ -97,7 +105,7 @@ fn decode(bytes: &[u8]) -> Result<Vec<Decoded>, DisError> {
             }
         }
 
-        decoded.push(Decoded { offset, opcode: byte, imm: info.imm, value, destination, displacement });
+        decoded.push(Decoded { offset, opcode: byte, imm: info.imm, value, second, destination, displacement });
         offset += 1 + width;
     }
 
@@ -109,7 +117,8 @@ fn decode(bytes: &[u8]) -> Result<Vec<Decoded>, DisError> {
 /// The canonical rendering is uppercase mnemonics, one instruction per line, a
 /// single space before an operand, decimal immediates, explicit `PUSH_*` widths,
 /// no comments, labels named `L0`, `L1`, … numbered by ascending target offset
-/// and placed on their own lines, and LF line endings.
+/// and placed on their own lines, a comma and a space between the two operands
+/// of a paired immediate, and LF line endings.
 ///
 /// A jump whose destination does not coincide with a linearly decoded
 /// instruction — one landing mid-instruction, or outside the program — is
@@ -146,6 +155,12 @@ pub fn disassemble(bytes: &[u8]) -> Result<String, DisError> {
 
         match insn.imm {
             Imm::None => {}
+            Imm::U8Pair => {
+                out.push(' ');
+                out.push_str(&insn.value.to_string());
+                out.push_str(", ");
+                out.push_str(&insn.second.to_string());
+            }
             Imm::Rel16 => {
                 let operand = insn
                     .destination
@@ -202,8 +217,8 @@ mod tests {
 
     #[test]
     fn canonical_form_of_the_derived_parameter_example() {
-        let text = disassemble(&[0x70, 0x01, 0x10, 0x02, 0x43, 0x01]).unwrap();
-        assert_eq!(text, "GETPARAM 1\nPUSH_U8 2\nDIV\nRET\n");
+        let text = disassemble(&[0x70, 0x01, 0x00, 0x10, 0x02, 0x43, 0x01]).unwrap();
+        assert_eq!(text, "GETPARAM 1, 0\nPUSH_U8 2\nDIV\nRET\n");
     }
 
     #[test]
@@ -239,7 +254,7 @@ second: RET
 
     #[test]
     fn the_specification_examples_round_trip() {
-        round_trips(&[0x70, 0x01, 0x10, 0x02, 0x43, 0x01]);
+        round_trips(&[0x70, 0x01, 0x00, 0x10, 0x02, 0x43, 0x01]);
         round_trips(&[
             0x32, 0x00, 0x10, 0x05, 0x42, 0x11, 0xE8, 0x03, 0x40, 0x11, 0x50, 0xC3, 0x45, 0x01,
         ]);

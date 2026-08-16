@@ -43,22 +43,26 @@ impl TableHost {
 }
 
 impl VmHost for TableHost {
-    fn arity(&self, func_id: u16, selector: u8) -> Option<u8> {
-        if func_id != HOST_RESOLVE_PARAMETER {
-            return None;
-        }
-        match self.lookup(selector)? {
-            Param::Constant(_) => Some(0),
-            Param::Program(_, arity) => Some(*arity),
-        }
-    }
-
     fn call(&self, func_id: u16, args: &[u64], fuel: &mut Fuel) -> Option<u64> {
         if func_id != HOST_RESOLVE_PARAMETER {
             return None;
         }
         self.calls.set(self.calls.get() + 1);
-        match self.lookup(args[0] as u8)? {
+        let param = self.lookup(args[0] as u8)?;
+
+        // The instruction declares how many operands it passed; only the host
+        // knows what the registry says the arity is, so checking that the two
+        // agree is the host's job and nobody else's.
+        let declared = args.len() - 1;
+        let registered = match param {
+            Param::Constant(_) => 0,
+            Param::Program(_, arity) => *arity as usize,
+        };
+        if declared != registered {
+            return None;
+        }
+
+        match param {
             Param::Constant(value) => Some(*value),
             Param::Program(program, _) => match TestVm::execute(program, &args[1..], fuel, self) {
                 VmOutcome::Completed(value) => Some(value),
@@ -72,9 +76,6 @@ impl VmHost for TableHost {
 struct DecliningHost;
 
 impl VmHost for DecliningHost {
-    fn arity(&self, _func_id: u16, _selector: u8) -> Option<u8> {
-        None
-    }
     fn call(&self, _func_id: u16, _args: &[u64], _fuel: &mut Fuel) -> Option<u64> {
         None
     }
@@ -418,7 +419,7 @@ fn trap_operand_index_out_of_range() {
 fn trap_host_call_unresolved() {
     use opcode::*;
     let mut fuel = Fuel::new(1000);
-    let outcome = TestVm::execute(&[GETPARAM, 1, RET], &[], &mut fuel, &DecliningHost);
+    let outcome = TestVm::execute(&[GETPARAM, 1, 0, RET], &[], &mut fuel, &DecliningHost);
     assert_eq!(outcome, VmOutcome::Trapped(TrapReason::HostCallUnresolved));
 }
 
@@ -431,7 +432,7 @@ fn trap_nesting_depth_exceeded() {
     let host = TableHost::new(PARAMS);
     let mut fuel = Fuel::new(1000);
     fuel.depth = 4;
-    let outcome = TestVm::execute(&[GETPARAM, 1, RET], &[], &mut fuel, &host);
+    let outcome = TestVm::execute(&[GETPARAM, 1, 0, RET], &[], &mut fuel, &host);
     assert_eq!(outcome, VmOutcome::Trapped(TrapReason::NestingDepthExceeded));
 }
 
@@ -441,11 +442,11 @@ fn a_cycle_between_parameters_terminates() {
     // Parameter 5 resolves by asking for parameter 5. Nothing detects the cycle
     // statically; the nesting limit stops it, and the host maps the failed
     // sub-evaluation onto a declined resolution for its caller.
-    static SELF_REFERENCE: &[u8] = &[GETPARAM, 5, RET];
+    static SELF_REFERENCE: &[u8] = &[GETPARAM, 5, 0, RET];
     static PARAMS: &[(u8, Param)] = &[(5, Param::Program(SELF_REFERENCE, 0))];
     let host = TableHost::new(PARAMS);
     let mut fuel = Fuel::new(10_000);
-    let outcome = TestVm::execute(&[GETPARAM, 5, RET], &[], &mut fuel, &host);
+    let outcome = TestVm::execute(&[GETPARAM, 5, 0, RET], &[], &mut fuel, &host);
     assert_eq!(outcome, VmOutcome::Trapped(TrapReason::HostCallUnresolved));
     // Four levels of nesting were entered before the limit refused the fifth.
     assert_eq!(host.calls.get(), 4);
@@ -504,7 +505,7 @@ fn nested_evaluation_draws_from_the_callers_budget() {
     let host = TableHost::new(PARAMS);
 
     // Four instructions in the caller, two in the callee.
-    let program = [GETPARAM, 1, PUSH_U8, 2, DIV, RET];
+    let program = [GETPARAM, 1, 0, PUSH_U8, 2, DIV, RET];
     let mut fuel = Fuel::new(1000);
     assert_eq!(TestVm::execute(&program, &[], &mut fuel, &host), VmOutcome::Completed(30_000));
     assert_eq!(fuel.remaining, 1000 - 6, "the callee spends from the same budget");
@@ -532,12 +533,12 @@ fn getparam_consumes_exactly_the_declared_arity() {
     // A sentinel beneath the argument must survive the call untouched: dropping
     // the result leaves the sentinel, which only holds if exactly one operand
     // was consumed.
-    let program = [PUSH_U8, 99, PUSH_U8, 200, GETPARAM, 24, POP, RET];
+    let program = [PUSH_U8, 99, PUSH_U8, 200, GETPARAM, 24, 1, POP, RET];
     let mut fuel = Fuel::new(1000);
     assert_eq!(TestVm::execute(&program, &[], &mut fuel, &host), VmOutcome::Completed(99));
 
     // And the value itself is the computed price.
-    let program = [PUSH_U8, 200, GETPARAM, 24, RET];
+    let program = [PUSH_U8, 200, GETPARAM, 24, 1, RET];
     let mut fuel = Fuel::new(1000);
     assert_eq!(TestVm::execute(&program, &[], &mut fuel, &host), VmOutcome::Completed(2000));
 }
@@ -551,9 +552,37 @@ fn getparam_arguments_are_passed_deepest_first() {
     static PARAMS: &[(u8, Param)] = &[(7, Param::Program(ORDER, 2))];
     let host = TableHost::new(PARAMS);
 
-    let program = [PUSH_U8, 3, PUSH_U8, 4, GETPARAM, 7, RET];
+    let program = [PUSH_U8, 3, PUSH_U8, 4, GETPARAM, 7, 2, RET];
     let mut fuel = Fuel::new(1000);
     assert_eq!(TestVm::execute(&program, &[], &mut fuel, &host), VmOutcome::Completed(304));
+}
+
+#[test]
+fn a_declared_count_the_registry_disagrees_with_is_the_hosts_to_refuse() {
+    use opcode::*;
+    // Parameter 24 takes one argument. A program that declares two passes two,
+    // and the VM neither knows nor checks — the host owns the registry, so it is
+    // the only party that can tell, and its refusal reaches the program as an
+    // unresolved host call.
+    static PRICE: &[u8] = &[ARG, 0, RET];
+    static PARAMS: &[(u8, Param)] = &[(24, Param::Program(PRICE, 1))];
+    let host = TableHost::new(PARAMS);
+
+    let mut fuel = Fuel::new(1000);
+    let program = [PUSH_U8, 1, PUSH_U8, 2, GETPARAM, 24, 2, RET];
+    let outcome = TestVm::execute(&program, &[], &mut fuel, &host);
+    assert_eq!(outcome, VmOutcome::Trapped(TrapReason::HostCallUnresolved));
+
+    // Declaring too few is refused on the same grounds.
+    let mut fuel = Fuel::new(1000);
+    let program = [PUSH_U8, 1, GETPARAM, 24, 0, RET];
+    let outcome = TestVm::execute(&program, &[], &mut fuel, &host);
+    assert_eq!(outcome, VmOutcome::Trapped(TrapReason::HostCallUnresolved));
+
+    // The declared count matching the registry resolves.
+    let mut fuel = Fuel::new(1000);
+    let program = [PUSH_U8, 7, GETPARAM, 24, 1, RET];
+    assert_eq!(TestVm::execute(&program, &[], &mut fuel, &host), VmOutcome::Completed(7));
 }
 
 #[test]
@@ -563,7 +592,7 @@ fn getparam_underflows_when_the_stack_lacks_the_arity() {
     static PARAMS: &[(u8, Param)] = &[(24, Param::Program(PRICE, 1))];
     let host = TableHost::new(PARAMS);
     let mut fuel = Fuel::new(1000);
-    let outcome = TestVm::execute(&[GETPARAM, 24, RET], &[], &mut fuel, &host);
+    let outcome = TestVm::execute(&[GETPARAM, 24, 1, RET], &[], &mut fuel, &host);
     assert_eq!(outcome, VmOutcome::Trapped(TrapReason::StackUnderflow));
 }
 
@@ -575,14 +604,15 @@ fn getparam_overflows_when_the_stack_is_full() {
     static PARAMS: &[(u8, Param)] = &[(1, Param::Constant(5))];
     let host = TableHost::new(PARAMS);
 
-    let mut program = [0u8; STACK_DEPTH * 2 + 3];
+    let mut program = [0u8; STACK_DEPTH * 2 + 4];
     for slot in 0..STACK_DEPTH {
         program[slot * 2] = PUSH_U8;
         program[slot * 2 + 1] = 1;
     }
     program[STACK_DEPTH * 2] = GETPARAM;
     program[STACK_DEPTH * 2 + 1] = 1;
-    program[STACK_DEPTH * 2 + 2] = RET;
+    program[STACK_DEPTH * 2 + 2] = 0;
+    program[STACK_DEPTH * 2 + 3] = RET;
 
     let mut fuel = Fuel::new(1000);
     assert_eq!(TestVm::execute(&program, &[], &mut fuel, &host), VmOutcome::Trapped(TrapReason::StackOverflow));
@@ -595,10 +625,10 @@ fn a_host_that_declines_one_key_still_serves_another() {
     let host = TableHost::new(PARAMS);
 
     let mut fuel = Fuel::new(1000);
-    assert_eq!(TestVm::execute(&[GETPARAM, 1, RET], &[], &mut fuel, &host), VmOutcome::Completed(42));
+    assert_eq!(TestVm::execute(&[GETPARAM, 1, 0, RET], &[], &mut fuel, &host), VmOutcome::Completed(42));
 
     let mut fuel = Fuel::new(1000);
-    let outcome = TestVm::execute(&[GETPARAM, 2, RET], &[], &mut fuel, &host);
+    let outcome = TestVm::execute(&[GETPARAM, 2, 0, RET], &[], &mut fuel, &host);
     assert_eq!(outcome, VmOutcome::Trapped(TrapReason::HostCallUnresolved));
 }
 
@@ -626,9 +656,9 @@ fn a_jump_into_the_middle_of_an_instruction_decodes_deterministically() {
 
 #[test]
 fn specification_example_derived_parameter() {
-    // GETPARAM 1 / PUSH 2 / DIV / RET, stated as six bytes: 70 01 10 02 43 01.
-    let program = [0x70, 0x01, 0x10, 0x02, 0x43, 0x01];
-    assert_eq!(program.len(), 6);
+    // GETPARAM 1, 0 / PUSH 2 / DIV / RET: 70 01 00 10 02 43 01.
+    let program = [0x70, 0x01, 0x00, 0x10, 0x02, 0x43, 0x01];
+    assert_eq!(program.len(), 7);
 
     static PARAMS: &[(u8, Param)] = &[(1, Param::Constant(60_000))];
     let host = TableHost::new(PARAMS);

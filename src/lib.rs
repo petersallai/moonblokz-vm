@@ -51,7 +51,6 @@
 //! use moonblokz_vm::{Fuel, Vm, VmOutcome};
 //! # struct NoHost;
 //! # impl moonblokz_vm::VmHost for NoHost {
-//! #     fn arity(&self, _: u16, _: u8) -> Option<u8> { None }
 //! #     fn call(&self, _: u16, _: &[u64], _: &mut Fuel) -> Option<u64> { None }
 //! # }
 //! // registration_price(n) = min(1000 + 5 * n, 50000)
@@ -183,7 +182,8 @@ pub mod opcode {
     pub const GTE: u8 = 0x65;
 
     // Host calls.
-    /// Resolve another configuration parameter through the host.
+    /// Resolve another configuration parameter through the host, consuming the
+    /// number of operands the instruction itself declares.
     pub const GETPARAM: u8 = 0x70;
 }
 
@@ -195,6 +195,8 @@ pub enum Imm {
     None,
     /// An unsigned 8-bit immediate.
     U8,
+    /// Two unsigned 8-bit immediates, in the order written.
+    U8Pair,
     /// An unsigned 16-bit immediate, little-endian.
     U16,
     /// An unsigned 32-bit immediate, little-endian.
@@ -212,7 +214,7 @@ impl Imm {
         match self {
             Imm::None => 0,
             Imm::U8 => 1,
-            Imm::U16 | Imm::Rel16 => 2,
+            Imm::U8Pair | Imm::U16 | Imm::Rel16 => 2,
             Imm::U32 => 4,
             Imm::U64 => 8,
         }
@@ -279,7 +281,7 @@ pub const INSTRUCTIONS: [InstructionInfo; 34] = {
         insn(op::LTE, "LTE", Imm::None),
         insn(op::GT, "GT", Imm::None),
         insn(op::GTE, "GTE", Imm::None),
-        insn(op::GETPARAM, "GETPARAM", Imm::U8),
+        insn(op::GETPARAM, "GETPARAM", Imm::U8Pair),
     ]
 };
 
@@ -376,24 +378,18 @@ pub const HOST_RESOLVE_PARAMETER: u16 = 0;
 /// capabilities are new `func_id` values rather than new trait methods — an added
 /// method is a breaking change for every implementor, an added identifier is not.
 ///
-/// # Why `arity` is a separate query
+/// # The host validates the argument count
 ///
-/// [`GETPARAM`] must consume exactly the parameter's declared arity from the
-/// operand stack, but arity is registry knowledge and the registry belongs to
-/// `moonblokz-configuration`. The VM therefore has to ask before it can build the
-/// argument list, and there is no way to fold the question into [`call`] itself:
-/// the arguments cannot be assembled until their number is known. Keeping it a
-/// query rather than baking a table into this crate is what preserves the rule
-/// that the VM does not know what a parameter is — it learns how many operands to
-/// take, and nothing else.
+/// [`GETPARAM`] declares how many operands it passes, so `args.len() - 1` is what
+/// the *program* claims the parameter's arity to be, not what the registry says
+/// it is. The host owns the registry and is therefore the only party that can
+/// tell the two apart: a program declaring the wrong count should be declined,
+/// which reaches the program as [`HostCallUnresolved`] and falls to the next
+/// resolution tier like any other failure. The VM neither knows nor checks.
 ///
 /// [`GETPARAM`]: opcode::GETPARAM
-/// [`call`]: VmHost::call
+/// [`HostCallUnresolved`]: TrapReason::HostCallUnresolved
 pub trait VmHost {
-    /// How many operands `selector` takes under `func_id`, or `None` if the host
-    /// declines to resolve it.
-    fn arity(&self, func_id: u16, selector: u8) -> Option<u8>;
-
     /// Invokes `func_id` over `args`, drawing from the caller's remaining budget.
     ///
     /// `None` propagates as a failed evaluation of the calling program.
@@ -727,13 +723,16 @@ impl<const STACK_DEPTH: usize, const LOCAL_SLOTS: usize, const MAX_NESTING: usiz
                 }
 
                 op::GETPARAM => {
-                    let key = imm!(1)[0];
+                    // The instruction is self-describing: it carries both the
+                    // parameter it resolves and the number of operands it passes.
+                    // Nothing here consults a registry, so the VM still learns
+                    // only a count — and the host, which owns the registry, is
+                    // where a count that disagrees with it is caught.
+                    let operands = imm!(2);
+                    let key = operands[0];
+                    let argc = operands[1] as usize;
 
-                    let arity = match host.arity(HOST_RESOLVE_PARAMETER, key) {
-                        Some(arity) => arity as usize,
-                        None => return VmOutcome::Trapped(TrapReason::HostCallUnresolved),
-                    };
-                    if arity > sp {
+                    if argc > sp {
                         return VmOutcome::Trapped(TrapReason::StackUnderflow);
                     }
                     if fuel.depth as usize >= MAX_NESTING {
@@ -750,7 +749,7 @@ impl<const STACK_DEPTH: usize, const LOCAL_SLOTS: usize, const MAX_NESTING: usiz
                     if sp == STACK_DEPTH {
                         return VmOutcome::Trapped(TrapReason::StackOverflow);
                     }
-                    let base = sp - arity;
+                    let base = sp - argc;
                     stack.copy_within(base..sp, base + 1);
                     stack[base] = key as u64;
 
@@ -763,7 +762,7 @@ impl<const STACK_DEPTH: usize, const LOCAL_SLOTS: usize, const MAX_NESTING: usiz
                         Some(value) => push!(value),
                         None => return VmOutcome::Trapped(TrapReason::HostCallUnresolved),
                     }
-                    pc += 2;
+                    pc += 3;
                 }
 
                 _ => return VmOutcome::Trapped(TrapReason::UndefinedOpcode),
