@@ -245,7 +245,12 @@ pub struct InstructionInfo {
 }
 
 const fn insn(opcode: u8, mnemonic: &'static str, imm: Imm) -> InstructionInfo {
-    InstructionInfo { opcode, mnemonic, imm, cost: 1 }
+    InstructionInfo {
+        opcode,
+        mnemonic,
+        imm,
+        cost: 1,
+    }
 }
 
 /// Every allocated instruction, ordered by opcode.
@@ -352,7 +357,10 @@ pub struct Fuel {
 impl Fuel {
     /// A budget of `limit` fuel units at nesting depth zero.
     pub fn new(limit: u32) -> Self {
-        Self { remaining: limit, depth: 0 }
+        Self {
+            remaining: limit,
+            depth: 0,
+        }
     }
 
     /// Deducts `cost`, reporting whether the budget covered it.
@@ -499,7 +507,12 @@ impl<const STACK_DEPTH: usize, const LOCAL_SLOTS: usize, const MAX_NESTING: usiz
     ///
     /// [`TruncatedInstruction`]: TrapReason::TruncatedInstruction
     /// [`ControlFlowOutOfRange`]: TrapReason::ControlFlowOutOfRange
-    pub fn execute<H: VmHost + ?Sized>(program: &[u8], args: &[u64], fuel: &mut Fuel, host: &H) -> VmOutcome {
+    pub fn execute<H: VmHost + ?Sized>(
+        program: &[u8],
+        args: &[u64],
+        fuel: &mut Fuel,
+        host: &H,
+    ) -> VmOutcome {
         let mut stack = [0u64; STACK_DEPTH];
         let mut locals = [0u64; LOCAL_SLOTS];
         let mut sp: usize = 0;
@@ -612,7 +625,9 @@ impl<const STACK_DEPTH: usize, const LOCAL_SLOTS: usize, const MAX_NESTING: usiz
                 }
                 op::PUSH_U64 => {
                     let b = imm!(8);
-                    push!(u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]));
+                    push!(u64::from_le_bytes([
+                        b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]
+                    ]));
                     pc += 9;
                 }
 

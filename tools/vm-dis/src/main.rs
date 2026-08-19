@@ -47,10 +47,14 @@ fn run() -> Result<(), String> {
 
     let bytes = match (hex, &input) {
         (Some(text), _) => parse_hex(&text)?,
-        (None, Some(path)) => std::fs::read(path).map_err(|e| format!("cannot read {path}: {e}"))?,
+        (None, Some(path)) => {
+            std::fs::read(path).map_err(|e| format!("cannot read {path}: {e}"))?
+        }
         (None, None) => {
             let mut buffer = Vec::new();
-            std::io::stdin().read_to_end(&mut buffer).map_err(|e| format!("cannot read standard input: {e}"))?;
+            std::io::stdin()
+                .read_to_end(&mut buffer)
+                .map_err(|e| format!("cannot read standard input: {e}"))?;
             buffer
         }
     };

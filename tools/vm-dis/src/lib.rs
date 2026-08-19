@@ -66,7 +66,10 @@ fn decode(bytes: &[u8]) -> Result<Vec<Decoded>, DisError> {
         let width = info.imm.size();
         let immediate = bytes.get(offset + 1..offset + 1 + width).ok_or(DisError {
             offset,
-            message: format!("{} needs a {width}-byte immediate, but the program ends", info.mnemonic),
+            message: format!(
+                "{} needs a {width}-byte immediate, but the program ends",
+                info.mnemonic
+            ),
         })?;
 
         let mut value = 0u64;
@@ -82,7 +85,10 @@ fn decode(bytes: &[u8]) -> Result<Vec<Decoded>, DisError> {
                 second = immediate[1] as u64;
             }
             Imm::U16 => value = u16::from_le_bytes([immediate[0], immediate[1]]) as u64,
-            Imm::U32 => value = u32::from_le_bytes([immediate[0], immediate[1], immediate[2], immediate[3]]) as u64,
+            Imm::U32 => {
+                value = u32::from_le_bytes([immediate[0], immediate[1], immediate[2], immediate[3]])
+                    as u64
+            }
             Imm::U64 => {
                 value = u64::from_le_bytes([
                     immediate[0],
@@ -105,7 +111,15 @@ fn decode(bytes: &[u8]) -> Result<Vec<Decoded>, DisError> {
             }
         }
 
-        decoded.push(Decoded { offset, opcode: byte, imm: info.imm, value, second, destination, displacement });
+        decoded.push(Decoded {
+            offset,
+            opcode: byte,
+            imm: info.imm,
+            value,
+            second,
+            destination,
+            displacement,
+        });
         offset += 1 + width;
     }
 
@@ -139,7 +153,12 @@ pub fn disassemble(bytes: &[u8]) -> Result<String, DisError> {
     destinations.sort_unstable();
     destinations.dedup();
 
-    let label_of = |offset: usize| destinations.iter().position(|d| *d == offset).map(|index| format!("L{index}"));
+    let label_of = |offset: usize| {
+        destinations
+            .iter()
+            .position(|d| *d == offset)
+            .map(|index| format!("L{index}"))
+    };
 
     let mut out = String::new();
     for insn in &decoded {
@@ -184,7 +203,11 @@ pub fn disassemble(bytes: &[u8]) -> Result<String, DisError> {
 
 /// Renders a program as a space-separated uppercase hexdump.
 pub fn hexdump(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" ")
+    bytes
+        .iter()
+        .map(|b| format!("{b:02X}"))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Parses a hexadecimal string, ignoring whitespace.
@@ -200,7 +223,10 @@ pub fn parse_hex(text: &str) -> Result<Vec<u8>, String> {
     }
     (0..digits.len())
         .step_by(2)
-        .map(|i| u8::from_str_radix(&digits[i..i + 2], 16).map_err(|_| format!("`{}` is not a hexadecimal byte", &digits[i..i + 2])))
+        .map(|i| {
+            u8::from_str_radix(&digits[i..i + 2], 16)
+                .map_err(|_| format!("`{}` is not a hexadecimal byte", &digits[i..i + 2]))
+        })
         .collect()
 }
 
@@ -218,8 +244,14 @@ mod tests {
     /// The property that makes the round trip a conformance test for the ISA.
     fn round_trips(bytes: &[u8]) {
         let text = disassemble(bytes).unwrap_or_else(|e| panic!("disassembly failed: {e}"));
-        let reassembled = assemble(&text).unwrap_or_else(|e| panic!("reassembly of\n{text}\nfailed: {e}"));
-        assert_eq!(reassembled, bytes, "round trip differs for {}\n{text}", hexdump(bytes));
+        let reassembled =
+            assemble(&text).unwrap_or_else(|e| panic!("reassembly of\n{text}\nfailed: {e}"));
+        assert_eq!(
+            reassembled,
+            bytes,
+            "round trip differs for {}\n{text}",
+            hexdump(bytes)
+        );
     }
 
     #[test]
@@ -266,8 +298,8 @@ second: RET
             0x32, 0x00, 0x10, 0x05, 0x42, 0x11, 0xE8, 0x03, 0x40, 0x11, 0x50, 0xC3, 0x45, 0x01,
         ]);
         round_trips(&[
-            0x11, 0xE8, 0x03, 0x32, 0x00, 0x10, 0x64, 0x43, 0x21, 0x03, 0x0D, 0x00, 0x10, 0x01, 0x41, 0x22, 0x21, 0x10, 0x0A, 0x43,
-            0x40, 0x22, 0x02, 0xEF, 0xFF, 0x20, 0x01,
+            0x11, 0xE8, 0x03, 0x32, 0x00, 0x10, 0x64, 0x43, 0x21, 0x03, 0x0D, 0x00, 0x10, 0x01,
+            0x41, 0x22, 0x21, 0x10, 0x0A, 0x43, 0x40, 0x22, 0x02, 0xEF, 0xFF, 0x20, 0x01,
         ]);
     }
 
