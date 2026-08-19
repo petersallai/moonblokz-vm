@@ -225,7 +225,7 @@ mod tests {
     #[test]
     fn canonical_form_of_the_derived_parameter_example() {
         let text = disassemble(&[0x70, 0x01, 0x00, 0x10, 0x02, 0x43, 0x01]).unwrap();
-        assert_eq!(text, "GETPARAM 1, 0\nPUSH_U8 2\nDIV\nRET\n");
+        assert_eq!(text, "GETCONFIG 1, 0\nPUSH_U8 2\nDIV\nRET\n");
     }
 
     #[test]
