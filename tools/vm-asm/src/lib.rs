@@ -292,21 +292,21 @@ mod tests {
 
     #[test]
     fn specification_example_derived_parameter() {
-        let source = "GETPARAM 1, 0        ; inter_block_interval_ms\nPUSH 2\nDIV\nRET\n";
+        let source = "GETCONFIG 1, 0        ; inter_block_interval_ms\nPUSH 2\nDIV\nRET\n";
         assert_eq!(assemble(source).unwrap(), vec![0x70, 0x01, 0x00, 0x10, 0x02, 0x43, 0x01]);
     }
 
     #[test]
-    fn getparam_declares_its_argument_count() {
+    fn getconfig_declares_its_argument_count() {
         // The comma is optional, and the count is a second immediate byte.
-        assert_eq!(assemble("GETPARAM 24, 1\nRET\n").unwrap(), vec![0x70, 0x18, 0x01, 0x01]);
-        assert_eq!(assemble("GETPARAM 24 1\nRET\n").unwrap(), vec![0x70, 0x18, 0x01, 0x01]);
-        assert_eq!(assemble("getparam 0x18,0x01\nret\n").unwrap(), vec![0x70, 0x18, 0x01, 0x01]);
+        assert_eq!(assemble("GETCONFIG 24, 1\nRET\n").unwrap(), vec![0x70, 0x18, 0x01, 0x01]);
+        assert_eq!(assemble("GETCONFIG 24 1\nRET\n").unwrap(), vec![0x70, 0x18, 0x01, 0x01]);
+        assert_eq!(assemble("getconfig 0x18,0x01\nret\n").unwrap(), vec![0x70, 0x18, 0x01, 0x01]);
 
-        let missing = assemble("GETPARAM 24\n").unwrap_err();
+        let missing = assemble("GETCONFIG 24\n").unwrap_err();
         assert!(missing.message.contains("argument count"), "{}", missing.message);
 
-        let too_wide = assemble("GETPARAM 24, 256\n").unwrap_err();
+        let too_wide = assemble("GETCONFIG 24, 256\n").unwrap_err();
         assert!(too_wide.message.contains("argument count"), "{}", too_wide.message);
 
         // An instruction with a single immediate still refuses a second operand.

@@ -7,13 +7,17 @@
 //! *computes* its value — a registration price that grows with the size of the
 //! network, for example. This crate executes those programs. It carries no
 //! MoonBlokz domain concepts at all: it receives a program, its arguments, a fuel
-//! budget and a host handle, and returns a typed outcome. What a parameter *is*,
-//! what the fuel limit should be, and what to do when a program fails all stay in
-//! `moonblokz-configuration`.
+//! budget and a host handle, and returns a typed outcome. It **depends on no
+//! MoonBlokz crate** and interprets none of the identifiers it passes: what a
+//! parameter *is*, what the fuel limit should be, and what to do when a program
+//! fails all stay in `moonblokz-configuration`. Its vocabulary is deliberately
+//! domain-near — `GETCONFIG` says what the instruction is for — because a
+//! mnemonic that needs a specification lookup costs more than it saves.
 //!
 //! That separation is what makes the crate verifiable on its own terms, and it is
 //! also why the post-MVP smart-contract runtime can build on the same engine
-//! without inheriting the configuration registry.
+//! without inheriting the configuration registry: a host implements the
+//! capabilities it wants and no others.
 //!
 //! # Determinism is the correctness property
 //!
@@ -184,7 +188,7 @@ pub mod opcode {
     // Host calls.
     /// Resolve another configuration parameter through the host, consuming the
     /// number of operands the instruction itself declares.
-    pub const GETPARAM: u8 = 0x70;
+    pub const GETCONFIG: u8 = 0x70;
 }
 
 /// The immediate operand an opcode carries, if any.
@@ -281,7 +285,7 @@ pub const INSTRUCTIONS: [InstructionInfo; 34] = {
         insn(op::LTE, "LTE", Imm::None),
         insn(op::GT, "GT", Imm::None),
         insn(op::GTE, "GTE", Imm::None),
-        insn(op::GETPARAM, "GETPARAM", Imm::U8Pair),
+        insn(op::GETCONFIG, "GETCONFIG", Imm::U8Pair),
     ]
 };
 
@@ -325,7 +329,7 @@ const COST: [u8; 256] = {
 
 /// The execution budget of one accessor invocation.
 ///
-/// Fuel is **one budget per invocation, shared across nesting**: a [`GETPARAM`]
+/// Fuel is **one budget per invocation, shared across nesting**: a [`GETCONFIG`]
 /// sub-evaluation draws from the same budget as its caller, and exhaustion aborts
 /// the whole invocation rather than just the sub-evaluation. Per-sub-evaluation
 /// budgets would let a program compose arbitrarily many sub-evaluations, each
@@ -338,7 +342,7 @@ const COST: [u8; 256] = {
 /// The limit is supplied by the caller. This crate never learns where it comes
 /// from, which is what keeps it independent of the configuration registry.
 ///
-/// [`GETPARAM`]: opcode::GETPARAM
+/// [`GETCONFIG`]: opcode::GETCONFIG
 #[cfg_attr(test, derive(Debug))]
 pub struct Fuel {
     remaining: u32,
@@ -367,9 +371,12 @@ impl Fuel {
 // Host seam
 // ---------------------------------------------------------------------------
 
-/// The `func_id` of parameter resolution: the selector is the parameter
-/// identifier and `args` are its arguments.
-pub const HOST_RESOLVE_PARAMETER: u16 = 0;
+/// The `func_id` of chain-configuration resolution: the selector is the
+/// configuration parameter's identifier and `args` are its arguments.
+///
+/// The ratified chain-info capability (`GETCHAININFO`, specification §4.6) is
+/// `func_id` 1 and is not implemented yet.
+pub const HOST_RESOLVE_CONFIG: u16 = 0;
 
 /// The whole of this crate's coupling to MoonBlokz: an identifier it does not
 /// interpret, and a callback it does not implement.
@@ -384,20 +391,20 @@ pub const HOST_RESOLVE_PARAMETER: u16 = 0;
 /// slice of the operand stack exactly as it stands. Folding it in would mean
 /// building `[key, a0, …]` somewhere, and the only place to build it without a
 /// second array is the stack itself — which would borrow a free slot and make
-/// [`GETPARAM`] overflow a full stack even where its net stack effect is zero.
+/// [`GETCONFIG`] overflow a full stack even where its net stack effect is zero.
 /// The separation is what keeps the instruction's stack effect precisely what
 /// the specification states.
 ///
 /// # The host validates the argument count
 ///
-/// [`GETPARAM`] declares how many operands it passes, so `args.len()` is what the
+/// [`GETCONFIG`] declares how many operands it passes, so `args.len()` is what the
 /// *program* claims the parameter's arity to be, not what the registry says it
 /// is. The host owns the registry and is therefore the only party that can tell
 /// the two apart: a program declaring the wrong count should be declined, which
 /// reaches the program as [`HostCallUnresolved`] and falls to the next resolution
 /// tier like any other failure. The VM neither knows nor checks.
 ///
-/// [`GETPARAM`]: opcode::GETPARAM
+/// [`GETCONFIG`]: opcode::GETCONFIG
 /// [`HostCallUnresolved`]: TrapReason::HostCallUnresolved
 pub trait VmHost {
     /// Invokes `func_id` on `selector` over `args`, drawing from the caller's
@@ -419,7 +426,7 @@ pub enum TrapReason {
     StackOverflow,
     /// An instruction consumed an absent operand.
     StackUnderflow,
-    /// `GETPARAM` recursion passed the fixed maximum.
+    /// `GETCONFIG` recursion passed the fixed maximum.
     NestingDepthExceeded,
     /// A reserved or unassigned opcode byte was decoded.
     UndefinedOpcode,
@@ -430,7 +437,7 @@ pub enum TrapReason {
     /// An `ARG` index at or above the invocation's arity, or a `LOAD` / `STORE`
     /// slot outside the local-slot array.
     OperandIndexOutOfRange,
-    /// The host declined a parameter named by `GETPARAM`.
+    /// The host declined a parameter named by `GETCONFIG`.
     HostCallUnresolved,
 }
 
@@ -466,7 +473,7 @@ pub enum VmOutcome {
 ///
 /// - `STACK_DEPTH` — maximum operand-stack depth.
 /// - `LOCAL_SLOTS` — number of local slots, zero-initialised before execution.
-/// - `MAX_NESTING` — maximum depth of `GETPARAM` recursion. A cyclic reference
+/// - `MAX_NESTING` — maximum depth of `GETCONFIG` recursion. A cyclic reference
 ///   between parameters is caught here, and failing that by fuel.
 pub struct Vm<const STACK_DEPTH: usize, const LOCAL_SLOTS: usize, const MAX_NESTING: usize>;
 
@@ -733,7 +740,7 @@ impl<const STACK_DEPTH: usize, const LOCAL_SLOTS: usize, const MAX_NESTING: usiz
                     pc += 1;
                 }
 
-                op::GETPARAM => {
+                op::GETCONFIG => {
                     // The instruction is self-describing: it carries both the
                     // parameter it resolves and the number of operands it passes.
                     // Nothing here consults a registry, so the VM still learns
@@ -761,7 +768,7 @@ impl<const STACK_DEPTH: usize, const LOCAL_SLOTS: usize, const MAX_NESTING: usiz
                     let base = sp - argc;
 
                     fuel.depth += 1;
-                    let resolved = host.call(HOST_RESOLVE_PARAMETER, key, &stack[base..sp], fuel);
+                    let resolved = host.call(HOST_RESOLVE_CONFIG, key, &stack[base..sp], fuel);
                     fuel.depth -= 1;
 
                     sp = base;
