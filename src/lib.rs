@@ -5,14 +5,14 @@
 //!
 //! A chain-configurable parameter may be a plain literal or a small program that
 //! *computes* its value — a registration price that grows with the size of the
-//! network, for example. This crate executes those programs. It carries no
-//! MoonBlokz domain concepts at all: it receives a program, its arguments, a fuel
-//! budget and a host handle, and returns a typed outcome. It **depends on no
-//! MoonBlokz crate** and interprets none of the identifiers it passes: what a
-//! parameter *is*, what the fuel limit should be, and what to do when a program
-//! fails all stay in `moonblokz-configuration`. Its vocabulary is deliberately
-//! domain-near — `GETCONFIG` says what the instruction is for — because a
-//! mnemonic that needs a specification lookup costs more than it saves.
+//! network, for example. This crate executes those programs. It **depends on no
+//! MoonBlokz crate** and interprets none of the identifiers it passes: it receives
+//! a program, its arguments, a fuel budget and a host handle, and returns a typed
+//! outcome, while what a parameter *is*, what the fuel limit should be, and what
+//! to do when a program fails all stay in `moonblokz-configuration`. Its
+//! vocabulary is deliberately domain-near — `GETCONFIG` says what the
+//! instruction is for — because a mnemonic that needs a specification lookup
+//! costs more than it saves.
 //!
 //! That separation is what makes the crate verifiable on its own terms, and it is
 //! also why the post-MVP smart-contract runtime can build on the same engine
