@@ -48,10 +48,14 @@ fn run() -> Result<(), String> {
     }
 
     let source = match &input {
-        Some(path) => std::fs::read_to_string(path).map_err(|e| format!("cannot read {path}: {e}"))?,
+        Some(path) => {
+            std::fs::read_to_string(path).map_err(|e| format!("cannot read {path}: {e}"))?
+        }
         None => {
             let mut buffer = String::new();
-            std::io::stdin().read_to_string(&mut buffer).map_err(|e| format!("cannot read standard input: {e}"))?;
+            std::io::stdin()
+                .read_to_string(&mut buffer)
+                .map_err(|e| format!("cannot read standard input: {e}"))?;
             buffer
         }
     };
@@ -62,7 +66,9 @@ fn run() -> Result<(), String> {
     })?;
 
     match output {
-        Some(path) => std::fs::write(&path, &bytes).map_err(|e| format!("cannot write {path}: {e}"))?,
+        Some(path) => {
+            std::fs::write(&path, &bytes).map_err(|e| format!("cannot write {path}: {e}"))?
+        }
         None => {
             let hex: Vec<String> = bytes.iter().map(|b| format!("{b:02X}")).collect();
             let mut stdout = std::io::stdout();

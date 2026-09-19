@@ -4,7 +4,7 @@ Bytecode execution engine for MoonBlokz chain-configuration parameters — a `no
 
 - `no_std`, no-alloc, **no dependencies at all** — nothing beyond `core`. The dependency-graph gate (`cargo tree -p moonblokz-vm -e normal | grep -iE 'embassy|alloc'`) is empty, which is what keeps `moonblokz-blockchain` host-testable without an async runtime once it depends on this crate transitively.
 - No `unsafe`, so no Miri obligation.
-- Carries **no MoonBlokz domain concepts**. It receives a program, its arguments, a fuel budget and a host handle, and returns a typed outcome. What a parameter *is*, what the fuel limit should be, and what to do when a program fails all stay in `moonblokz-configuration`. That is also why the post-MVP smart-contract runtime can build on the same engine.
+- **Depends on no MoonBlokz crate, and interprets none of the identifiers it passes.** It receives a program, its arguments, a fuel budget and a host handle, and returns a typed outcome. What a parameter *is*, what the fuel limit should be, and what to do when a program fails all stay in `moonblokz-configuration`. That is also why the post-MVP smart-contract runtime can build on the same engine: a host implements the capabilities it wants and no others. The *vocabulary* is deliberately domain-near — `GETCONFIG` names what the instruction is for, and the ratified `GETCHAININFO` (`func_id` 1, specification §4.6) will name the other — because the invariant that matters is the dependency graph, which the gate above measures, not the choice of nouns.
 
 ## Shape
 
@@ -20,7 +20,7 @@ Every value computed here feeds a consensus decision, so determinism is the corr
 - **Initial state is fully defined.** Local slots are zero-initialised; no instruction can read state that was never written.
 - **Nothing node-local or non-deterministic is reachable.** No clock, no randomness, and no instruction that reads the remaining fuel — a program that could branch on its budget would freeze the cost table forever.
 - **There is no load-time verifier**, deliberately. Fuel, stack depth and nesting are not decidable ahead of a run once the instruction set has backward jumps, so the runtime has to be total regardless; a verifier would duplicate a subset of the same checks in a second code path. Structural diagnostics belong in `vm-asm`.
-- **Fuel is charged per instruction from a cost table** and is one budget per invocation, shared across `GETPARAM` nesting. Per-sub-evaluation budgets would let a program compose arbitrarily many sub-evaluations and evade the bound entirely.
+- **Fuel is charged per instruction from a cost table** and is one budget per invocation, shared across `GETCONFIG` nesting. Per-sub-evaluation budgets would let a program compose arbitrarily many sub-evaluations and evade the bound entirely.
 
 ## Tools
 
