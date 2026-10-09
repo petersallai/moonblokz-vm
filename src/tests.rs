@@ -150,7 +150,7 @@ fn opcode_groups_match_the_specified_partition() {
     assert_eq!(allocated_in(0x40, 0x4F), 7, "arithmetic");
     assert_eq!(allocated_in(0x50, 0x5F), 6, "bitwise");
     assert_eq!(allocated_in(0x60, 0x6F), 6, "comparison");
-    assert_eq!(allocated_in(0x70, 0x7F), 1, "host calls");
+    assert_eq!(allocated_in(0x70, 0x7F), 2, "host calls");
     assert_eq!(allocated_in(0x80, 0xFF), 0, "reserved for future groups");
 }
 
@@ -640,7 +640,8 @@ fn nested_evaluation_draws_from_the_callers_budget() {
 #[test]
 fn getconfig_consumes_exactly_the_declared_arity() {
     use opcode::*;
-    // registration_price(registered_nodes) = min(1000 + 5 * n, 50000)
+    // A host parameter taking one argument: min(1000 + 5 * n, 50000). This host's
+    // registry is its own — the VM checks no arity, whatever a real host allows.
     static PRICE: &[u8] = &[
         ARG, 0, PUSH_U8, 5, MUL, PUSH_U16, 0xE8, 0x03, ADD, PUSH_U16, 0x50, 0xC3, MIN, RET,
     ];
@@ -898,4 +899,83 @@ fn specification_example_loop() {
     // Below a hundred nodes the loop body never runs.
     assert_eq!(completed(run(&program, &[0])), 1000);
     assert_eq!(completed(run(&program, &[99])), 1000);
+}
+
+/// Answers chain-info reads only: identifier 1 with no arguments is `7`, and the
+/// depth it observes is recorded so a test can tell whether the VM nested.
+struct ChainInfoHost {
+    depth_seen: core::cell::Cell<u16>,
+}
+
+impl VmHost for ChainInfoHost {
+    fn call(&self, func_id: u16, selector: u8, args: &[u64], fuel: &mut Fuel) -> Option<u64> {
+        self.depth_seen.set(fuel.depth);
+        match (func_id, selector, args) {
+            (HOST_READ_CHAIN_INFO, 1, []) => Some(7),
+            (HOST_READ_CHAIN_INFO, 2, [a]) => Some(a + 100),
+            _ => None,
+        }
+    }
+}
+
+#[test]
+fn getchaininfo_reads_through_the_host_without_nesting() {
+    use opcode::*;
+    let host = ChainInfoHost {
+        depth_seen: core::cell::Cell::new(u16::MAX),
+    };
+    let mut fuel = Fuel::new(1000);
+    let outcome = TestVm::execute(
+        &[GETCHAININFO, 1, 0, PUSH_U8, 3, MUL, RET],
+        &[],
+        &mut fuel,
+        &host,
+    );
+    assert_eq!(outcome, VmOutcome::Completed(21));
+    assert_eq!(
+        host.depth_seen.get(),
+        0,
+        "a chain-info read does not re-enter the VM"
+    );
+    assert_eq!(fuel.depth, 0);
+}
+
+#[test]
+fn getchaininfo_consumes_its_declared_operands() {
+    use opcode::*;
+    // The value below the argument survives; the argument itself is consumed.
+    let host = ChainInfoHost {
+        depth_seen: core::cell::Cell::new(0),
+    };
+    let mut fuel = Fuel::new(1000);
+    let program = [PUSH_U8, 9, PUSH_U8, 5, GETCHAININFO, 2, 1, ADD, RET];
+    assert_eq!(
+        TestVm::execute(&program, &[], &mut fuel, &host),
+        VmOutcome::Completed(9 + 105)
+    );
+}
+
+#[test]
+fn getchaininfo_declined_traps_and_does_not_reach_config_resolution() {
+    use opcode::*;
+    let mut fuel = Fuel::new(1000);
+    // A host that only resolves configuration parameters declines chain-info.
+    static PARAMS: &[(u8, Param)] = &[(1, Param::Constant(5))];
+    let host = TableHost::new(PARAMS);
+    let outcome = TestVm::execute(&[GETCHAININFO, 1, 0, RET], &[], &mut fuel, &host);
+    assert_eq!(outcome, VmOutcome::Trapped(TrapReason::HostCallUnresolved));
+    assert_eq!(host.calls.get(), 0, "HOST_RESOLVE_CONFIG was never invoked");
+}
+
+#[test]
+fn getchaininfo_with_too_few_operands_underflows() {
+    use opcode::*;
+    let host = ChainInfoHost {
+        depth_seen: core::cell::Cell::new(0),
+    };
+    let mut fuel = Fuel::new(1000);
+    assert_eq!(
+        TestVm::execute(&[GETCHAININFO, 2, 1, RET], &[], &mut fuel, &host),
+        VmOutcome::Trapped(TrapReason::StackUnderflow)
+    );
 }

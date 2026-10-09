@@ -57,7 +57,7 @@
 //! # impl moonblokz_vm::VmHost for NoHost {
 //! #     fn call(&self, _: u16, _: u8, _: &[u64], _: &mut Fuel) -> Option<u64> { None }
 //! # }
-//! // registration_price(n) = min(1000 + 5 * n, 50000)
+//! // f(n) = min(1000 + 5 * n, 50000), invoked with one argument
 //! let program = [
 //!     0x32, 0x00,             // ARG 0
 //!     0x10, 0x05,             // PUSH_U8 5
@@ -189,6 +189,9 @@ pub mod opcode {
     /// Resolve another configuration parameter through the host, consuming the
     /// number of operands the instruction itself declares.
     pub const GETCONFIG: u8 = 0x70;
+    /// Read a chain-info value through the host, consuming the number of
+    /// operands the instruction itself declares. Cannot re-enter the VM.
+    pub const GETCHAININFO: u8 = 0x71;
 }
 
 /// The immediate operand an opcode carries, if any.
@@ -254,7 +257,7 @@ const fn insn(opcode: u8, mnemonic: &'static str, imm: Imm) -> InstructionInfo {
 }
 
 /// Every allocated instruction, ordered by opcode.
-pub const INSTRUCTIONS: [InstructionInfo; 34] = {
+pub const INSTRUCTIONS: [InstructionInfo; 35] = {
     use crate::opcode as op;
     [
         insn(op::RET, "RET", Imm::None),
@@ -291,6 +294,7 @@ pub const INSTRUCTIONS: [InstructionInfo; 34] = {
         insn(op::GT, "GT", Imm::None),
         insn(op::GTE, "GTE", Imm::None),
         insn(op::GETCONFIG, "GETCONFIG", Imm::U8Pair),
+        insn(op::GETCHAININFO, "GETCHAININFO", Imm::U8Pair),
     ]
 };
 
@@ -381,10 +385,11 @@ impl Fuel {
 
 /// The `func_id` of chain-configuration resolution: the selector is the
 /// configuration parameter's identifier and `args` are its arguments.
-///
-/// The ratified chain-info capability (`GETCHAININFO`, specification §4.6) is
-/// `func_id` 1 and is not implemented yet.
 pub const HOST_RESOLVE_CONFIG: u16 = 0;
+
+/// The `func_id` of a chain-info read (specification §4.6): the selector is the
+/// chain-info identifier and `args` are its arguments.
+pub const HOST_READ_CHAIN_INFO: u16 = 1;
 
 /// The whole of this crate's coupling to MoonBlokz: an identifier it does not
 /// interpret, and a callback it does not implement.
@@ -405,14 +410,15 @@ pub const HOST_RESOLVE_CONFIG: u16 = 0;
 ///
 /// # The host validates the argument count
 ///
-/// [`GETCONFIG`] declares how many operands it passes, so `args.len()` is what the
-/// *program* claims the parameter's arity to be, not what the registry says it
-/// is. The host owns the registry and is therefore the only party that can tell
+/// [`GETCONFIG`] and [`GETCHAININFO`] declare how many operands they pass, so
+/// `args.len()` is what the *program* claims the identifier's arity to be, not
+/// what the host's registry says it is. The host owns the registry and is therefore the only party that can tell
 /// the two apart: a program declaring the wrong count should be declined, which
 /// reaches the program as [`HostCallUnresolved`] and falls to the next resolution
 /// tier like any other failure. The VM neither knows nor checks.
 ///
 /// [`GETCONFIG`]: opcode::GETCONFIG
+/// [`GETCHAININFO`]: opcode::GETCHAININFO
 /// [`HostCallUnresolved`]: TrapReason::HostCallUnresolved
 pub trait VmHost {
     /// Invokes `func_id` on `selector` over `args`, drawing from the caller's
@@ -445,7 +451,8 @@ pub enum TrapReason {
     /// An `ARG` index at or above the invocation's arity, or a `LOAD` / `STORE`
     /// slot outside the local-slot array.
     OperandIndexOutOfRange,
-    /// The host declined a parameter named by `GETCONFIG`.
+    /// The host declined a parameter named by `GETCONFIG`, or a chain-info value
+    /// named by `GETCHAININFO`.
     HostCallUnresolved,
 }
 
@@ -788,6 +795,28 @@ impl<const STACK_DEPTH: usize, const LOCAL_SLOTS: usize, const MAX_NESTING: usiz
 
                     sp = base;
                     match resolved {
+                        Some(value) => push!(value),
+                        None => return VmOutcome::Trapped(TrapReason::HostCallUnresolved),
+                    }
+                    pc += 3;
+                }
+
+                op::GETCHAININFO => {
+                    // `GETCONFIG`'s operand form, without its nesting: a chain-info
+                    // read is answered from the host's own state and cannot run a
+                    // program, so there is no depth to count and no cycle to stop.
+                    let operands = imm!(2);
+                    let key = operands[0];
+                    let argc = operands[1] as usize;
+
+                    if argc > sp {
+                        return VmOutcome::Trapped(TrapReason::StackUnderflow);
+                    }
+                    let base = sp - argc;
+                    let read = host.call(HOST_READ_CHAIN_INFO, key, &stack[base..sp], fuel);
+
+                    sp = base;
+                    match read {
                         Some(value) => push!(value),
                         None => return VmOutcome::Trapped(TrapReason::HostCallUnresolved),
                     }
