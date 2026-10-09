@@ -640,7 +640,8 @@ fn nested_evaluation_draws_from_the_callers_budget() {
 #[test]
 fn getconfig_consumes_exactly_the_declared_arity() {
     use opcode::*;
-    // registration_price(registered_nodes) = min(1000 + 5 * n, 50000)
+    // A host parameter taking one argument: min(1000 + 5 * n, 50000). This host's
+    // registry is its own — the VM checks no arity, whatever a real host allows.
     static PRICE: &[u8] = &[
         ARG, 0, PUSH_U8, 5, MUL, PUSH_U16, 0xE8, 0x03, ADD, PUSH_U16, 0x50, 0xC3, MIN, RET,
     ];

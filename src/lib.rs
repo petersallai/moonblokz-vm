@@ -57,7 +57,7 @@
 //! # impl moonblokz_vm::VmHost for NoHost {
 //! #     fn call(&self, _: u16, _: u8, _: &[u64], _: &mut Fuel) -> Option<u64> { None }
 //! # }
-//! // registration_price(n) = min(1000 + 5 * n, 50000)
+//! // f(n) = min(1000 + 5 * n, 50000), invoked with one argument
 //! let program = [
 //!     0x32, 0x00,             // ARG 0
 //!     0x10, 0x05,             // PUSH_U8 5

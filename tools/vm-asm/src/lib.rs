@@ -421,7 +421,7 @@ mod tests {
     #[test]
     fn specification_example_argument_taking_parameter() {
         let source = "\
-; registration_price(registered_nodes) = min(1000 + 5 * n, 50000)
+; f(n) = min(1000 + 5 * n, 50000), invoked with one argument
 ARG 0
 PUSH 5
 MUL
