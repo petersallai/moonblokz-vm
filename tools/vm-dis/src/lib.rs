@@ -261,6 +261,16 @@ mod tests {
     }
 
     #[test]
+    fn getchaininfo_disassembles_and_round_trips() {
+        let bytes = [0x71, 0x01, 0x00, 0x11, 0xE8, 0x03, 0x42, 0x01];
+        assert_eq!(
+            disassemble(&bytes).unwrap(),
+            "GETCHAININFO 1, 0\nPUSH_U16 1000\nMUL\nRET\n"
+        );
+        round_trips(&bytes);
+    }
+
+    #[test]
     fn canonical_form_uses_explicit_push_widths_and_decimal_immediates() {
         let text = disassemble(&[0x11, 0xE8, 0x03, 0x01]).unwrap();
         assert_eq!(text, "PUSH_U16 1000\nRET\n");

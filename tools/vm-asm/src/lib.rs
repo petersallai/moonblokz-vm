@@ -366,6 +366,15 @@ mod tests {
     }
 
     #[test]
+    fn getchaininfo_assembles_like_getconfig() {
+        // The registered-node count (chain-info 1) times 1000.
+        assert_eq!(
+            assemble("GETCHAININFO 1, 0\nPUSH_U16 1000\nMUL\nRET\n").unwrap(),
+            vec![0x71, 0x01, 0x00, 0x11, 0xE8, 0x03, 0x42, 0x01]
+        );
+    }
+
+    #[test]
     fn getconfig_declares_its_argument_count() {
         // The comma is optional, and the count is a second immediate byte.
         assert_eq!(
