@@ -419,10 +419,10 @@ mod tests {
     }
 
     #[test]
-    fn specification_example_argument_taking_parameter() {
+    fn specification_example_parameter_reading_chain_info() {
         let source = "\
-; f(n) = min(1000 + 5 * n, 50000), invoked with one argument
-ARG 0
+; registration_price = min(1000 + 5 * registered_node_count, 50000)
+GETCHAININFO 1, 0
 PUSH 5
 MUL
 PUSH 1000
@@ -432,7 +432,7 @@ MIN
 RET
 ";
         let expected = vec![
-            0x32, 0x00, // ARG 0
+            0x71, 0x01, 0x00, // GETCHAININFO 1, 0
             0x10, 0x05, // PUSH_U8 5
             0x42, // MUL
             0x11, 0xE8, 0x03, // PUSH_U16 1000
@@ -448,7 +448,7 @@ RET
     fn specification_example_loop() {
         let source = "\
         PUSH 1000          ; price
-        ARG 0
+        GETCHAININFO 1, 0  ; registered_node_count
         PUSH 100
         DIV                ; [price tiers]
 loop:   DUP
@@ -468,13 +468,13 @@ done:   POP
         let bytes = assemble(source).unwrap();
         assert_eq!(
             bytes.len(),
-            27,
-            "the specification states twenty-seven bytes"
+            28,
+            "the specification states twenty-eight bytes"
         );
-        // JMPZ at offset 9 reaches `done` at 25 from a following instruction at 12.
-        assert_eq!(&bytes[9..12], &[0x03, 0x0D, 0x00]);
-        // JMP at offset 22 reaches `loop` at 8 from a following instruction at 25.
-        assert_eq!(&bytes[22..25], &[0x02, 0xEF, 0xFF]);
+        // JMPZ at offset 10 reaches `done` at 26 from a following instruction at 13.
+        assert_eq!(&bytes[10..13], &[0x03, 0x0D, 0x00]);
+        // JMP at offset 23 reaches `loop` at 9 from a following instruction at 26.
+        assert_eq!(&bytes[23..26], &[0x02, 0xEF, 0xFF]);
     }
 
     #[test]
