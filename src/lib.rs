@@ -385,7 +385,6 @@ impl Fuel {
 
 /// The `func_id` of chain-configuration resolution: the selector is the
 /// configuration parameter's identifier and `args` are its arguments.
-///
 pub const HOST_RESOLVE_CONFIG: u16 = 0;
 
 /// The `func_id` of a chain-info read (specification §4.6): the selector is the
@@ -411,14 +410,15 @@ pub const HOST_READ_CHAIN_INFO: u16 = 1;
 ///
 /// # The host validates the argument count
 ///
-/// [`GETCONFIG`] declares how many operands it passes, so `args.len()` is what the
-/// *program* claims the parameter's arity to be, not what the registry says it
-/// is. The host owns the registry and is therefore the only party that can tell
+/// [`GETCONFIG`] and [`GETCHAININFO`] declare how many operands they pass, so
+/// `args.len()` is what the *program* claims the identifier's arity to be, not
+/// what the host's registry says it is. The host owns the registry and is therefore the only party that can tell
 /// the two apart: a program declaring the wrong count should be declined, which
 /// reaches the program as [`HostCallUnresolved`] and falls to the next resolution
 /// tier like any other failure. The VM neither knows nor checks.
 ///
 /// [`GETCONFIG`]: opcode::GETCONFIG
+/// [`GETCHAININFO`]: opcode::GETCHAININFO
 /// [`HostCallUnresolved`]: TrapReason::HostCallUnresolved
 pub trait VmHost {
     /// Invokes `func_id` on `selector` over `args`, drawing from the caller's
